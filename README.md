@@ -36,4 +36,4 @@ from torch_geometric.datasets import PPI
 dataset = PPI(root='./data/PPI')
 print(f'PPI dataset loaded. Contains {len(dataset)} graphs.')
 
-### This README provides basic guidelines and code examples for loading common graph datasets in PyTorch Geometric. Feel free to expand or modify this document as necessary for your requirements.
+
