@@ -108,14 +108,14 @@ data = train_test_split_edges(dataset[0])
 
 data = data.to(device)
 
-# 模型初始化
+# initial
 model = GraphSAGEPlusPlusDAC(dataset.num_features, 32, dataset.num_classes, num_layers=3).to(device)
 
-# 定义损失函数和优化器
+# optimizer
 criterion = torch.nn.BCEWithLogitsLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
 
-# 训练函数
+# train
 def train():
     model.train()
     total_loss = 0
@@ -123,10 +123,10 @@ def train():
         optimizer.zero_grad()
         out = model(data.x.to(device), data.train_pos_edge_index.to(device))
 
-        # 正样本损失
+        # positive
         pos_loss = criterion(out[data.train_pos_edge_index], torch.ones(data.train_pos_edge_index.size(1)).to(device))
 
-        # 负样本损失
+        # negtive
         neg_edge_index = negative_sampling(data.edge_index, num_nodes=data.num_nodes, num_neg_samples=data.train_pos_edge_index.size(1))
         neg_loss = criterion(out[neg_edge_index], torch.zeros(neg_edge_index.size(1)).to(device))
 
@@ -136,14 +136,14 @@ def train():
         total_loss += loss.item()
     return total_loss / len(train_loader)
 
-# 测试函数
+# test
 @torch.no_grad()
 def test():
     model.eval()
     out = model(data.x.to(device), data.test_pos_edge_index.to(device))
     # ... (链接预测的评估代码) ...
 
-# 训练和测试过程
+# train and test
 for epoch in range(1, 51):
     loss = train()
     print(f'Epoch {epoch}, Loss: {loss:.4f}')
