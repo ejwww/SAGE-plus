@@ -1,10 +1,6 @@
 # SAGE-plus
 GraphSAGE++: Weighted Multi-scale GNN for Graph Representation Learning
 
-### Copyright
-
-Feel free to use it. It's my privilege to help you.
-
 ### PyTorch Geometric Datasets Loading Guide
 
 PyTorch Geometric (PyG) is a library built on PyTorch that offers a wide range of tools for dealing with graph data. This document outlines how to obtain some common datasets - Amazon, Cora, Pubmed, Citeseer, and PPI - using PyG.
