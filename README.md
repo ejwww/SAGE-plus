@@ -1,5 +1,3 @@
-# SAGE-plus
-GraphSAGE++: Weighted Multi-scale GNN for Graph Representation Learning
 
 ### PyTorch Geometric Datasets Loading Guide
 
