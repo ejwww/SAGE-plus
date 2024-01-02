@@ -1,3 +1,4 @@
+If you make use of this code in your own work, please cite our paper: Jiawei E，Yinglong Zhang, Shangying Yang, Hong Wang, Xuewwen Xia, Xing Xu. GraphSAGE++: Weighted Multi-scale GNN for Graph Representation Learning.  Neural Processing Letters, accepted
 
 ### PyTorch Geometric Datasets Loading Guide
 
