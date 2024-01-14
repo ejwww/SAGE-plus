@@ -16,24 +16,20 @@ from torch_geometric.loader import NeighborSampler
 from torch_geometric.utils import negative_sampling
 
 class GraphSAGEPlusPlusDA(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
+    def __init__(self, in_channels, hidden_channels_list, out_channels):
         super().__init__()
-        self.num_layers = num_layers
-
+        self.num_layers = len(hidden_channels_list)
         self.convs_mean = torch.nn.ModuleList()
         self.convs_max = torch.nn.ModuleList()
 
-        # 第一层
-        self.convs_mean.append(SAGEConv(in_channels, hidden_channels, aggr='mean'))
-        self.convs_max.append(SAGEConv(in_channels, hidden_channels, aggr='max'))
+        for i in range(self.num_layers):
+            in_channels_layer = in_channels if i == 0 else 2 * hidden_channels_list[i-1]  # 注意这里的修改
+            out_channels_layer = hidden_channels_list[i]
+            self.convs_mean.append(SAGEConv(in_channels_layer, out_channels_layer, aggr='mean'))
+            self.convs_max.append(SAGEConv(in_channels_layer, out_channels_layer, aggr='max'))
 
-        # 其他层
-        for _ in range(num_layers - 1):
-            self.convs_mean.append(SAGEConv(hidden_channels, hidden_channels, aggr='mean'))
-            self.convs_max.append(SAGEConv(hidden_channels, hidden_channels, aggr='max'))
-
-        # 输出层
-        self.post_mp = nn.Linear(2 * hidden_channels, out_channels)
+        # 输出层的维度需要考虑到拼接操作
+        self.post_mp = nn.Linear(2 * hidden_channels_list[-1], out_channels)
 
     def reset_parameters(self):
         for conv in self.convs_mean:
@@ -43,75 +39,71 @@ class GraphSAGEPlusPlusDA(torch.nn.Module):
         self.post_mp.reset_parameters()
 
     def forward(self, x, adjs):
-        x_mean = x
-        x_max = x
-
         for i, (edge_index, _, size) in enumerate(adjs):
-            x_target = x[:size[1]]  # 提取目标节点的特征
+            x_target = x[:size[1]]
+            x_mean = self.convs_mean[i]((x, x_target), edge_index)
+            x_max = self.convs_max[i]((x, x_target), edge_index)
 
-            # 对每层应用 mean 聚合
-            x_mean = self.convs_mean[i]((x_mean, x_target), edge_index)
+            # 拼接mean和max层的结果
+            x = torch.cat([x_mean, x_max], dim=1)
 
-            # 对每层应用 max 聚合
-            x_max = self.convs_max[i]((x_max, x_target), edge_index)
+            if i != self.num_layers - 1:
+                x = F.relu(x)
 
-            if i == self.num_layers - 1:
-                # 最后一层时合并 mean 和 max 的结果
-                x = torch.cat([x_mean, x_max], dim=-1)
-                x = self.post_mp(x)
-                return F.log_softmax(x, dim=-1)
-            else:
-                x_mean = F.relu(x_mean)
-                x_max = F.relu(x_max)
+        # 在最后一层之后不需要ReLU
+        x_final = self.post_mp(x)
+        return F.log_softmax(x_final, dim=-1)
 
-
-dataset = Planetoid(root='data/Planetoid', name='Cora')
-data = dataset[0]
-
-# 定义设备
+# 数据准备和模型初始化
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+dataset = Planetoid(root='data/Planetoid', name='Cora')
+data = dataset[0].to(device)
 
-# 模型初始化
-model = GraphSAGEPlusPlusDA(dataset.num_features, 32, dataset.num_classes, num_layers=3).to(device)
+# 定义每层的维度，维度由dimension_calculate.py计算得出
+hidden_dims = [73, 34, 21]
+model = GraphSAGEPlusPlusDA(dataset.num_features, hidden_dims, dataset.num_classes).to(device)
 
-# 数据加载器
 train_loader = NeighborSampler(data.edge_index, node_idx=data.train_mask, sizes=[20, 10, 10], batch_size=64, shuffle=True)
 test_loader = NeighborSampler(data.edge_index, node_idx=data.test_mask, sizes=[20, 10, 10], batch_size=64, shuffle=False)
-
 # 定义损失函数和优化器
 criterion = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
 
+# 训练函数
 def train():
     model.train()
     total_loss = 0
-    for batch_size, n_id, adjs in train_loader:
+    for batch_size, n_id, adjs in train_loader:  # 正确处理从NeighborSampler返回的数据
+        # 将邻居采样信息移动到正确的设备上
         adjs = [adj.to(device) for adj in adjs]
         optimizer.zero_grad()
+        # 正确传递邻居采样数据给模型
         out = model(data.x[n_id].to(device), adjs)
+        # 计算损失
         loss = criterion(out, data.y[n_id[:batch_size]].to(device))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     return total_loss / len(train_loader)
 
+
+# 测试函数
 def test():
     model.eval()
     correct = 0
-    for batch_size, n_id, adjs in test_loader:
-        adjs = [adj.to(device) for adj in adjs]
-        out = model(data.x[n_id].to(device), adjs)
-        pred = out.argmax(dim=1)
-        correct += int(pred.eq(data.y[n_id[:batch_size]].to(device)).sum().item())
-    return correct / int(data.test_mask.sum())
+    for batch_size, n_id, adjs in test_loader:  # 正确处理从NeighborSampler返回的数据
+        adjs = [adj.to(device) for adj in adjs]  # 将邻居采样信息移动到正确的设备上
 
-# 训练过程
+        out = model(data.x[n_id].to(device), adjs)  # 正确传递邻居采样数据给模型
+        pred = out.argmax(dim=1)  # 获取概率最高的类别
+        correct += int(pred.eq(data.y[n_id[:batch_size]].to(device)).sum().item())  # 计算正确预测的数量
+    return correct / int(data.test_mask.sum())  # 返回测试准确率
+
+
+# 训练和测试过程
 for epoch in range(1, 51):
     loss = train()
     print(f'Epoch {epoch}, Loss: {loss:.4f}')
-
-
-# 测试过程
 test_acc = test()
 print(f'Test Accuracy: {test_acc:.4f}')
 
