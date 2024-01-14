@@ -15,89 +15,87 @@ from torch_geometric.loader import NeighborSampler
 from torch_geometric.utils import negative_sampling
 import time
 
-
-class GraphSAGEPlusPlusDAC(torch.nn.Module):
-    def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
+class GraphSAGEPlusPlusMean(torch.nn.Module):
+    def __init__(self, in_channels, hidden_channels_list, out_channels):
         super().__init__()
-        self.num_layers = num_layers
-
+        self.num_layers = len(hidden_channels_list)
         self.convs_mean = torch.nn.ModuleList()
-        self.convs_mean2 = torch.nn.ModuleList()
 
-        for _ in range(num_layers):
-            self.convs_mean.append(SAGEConv(in_channels if _ == 0 else hidden_channels, hidden_channels, aggr='mean'))
-            self.convs_mean2.append(SAGEConv(in_channels if _ == 0 else hidden_channels, hidden_channels, aggr='mean'))
+        for i in range(self.num_layers):
+            in_channels_layer = in_channels if i == 0 else hidden_channels_list[i - 1]
+            self.convs_mean.append(SAGEConv(in_channels_layer, hidden_channels_list[i], aggr='mean'))
 
-        self.post_mp = nn.Linear(num_layers * 2 * hidden_channels, out_channels)
+        self.post_mp = nn.Linear(sum(hidden_channels_list), out_channels)
 
     def reset_parameters(self):
         for conv in self.convs_mean:
             conv.reset_parameters()
-        for conv in self.convs_mean2:
-            conv.reset_parameters()
         self.post_mp.reset_parameters()
 
     def forward(self, x, adjs):
-        all_layers_mean = []
-        all_layers_mean2 = []
+        all_layers_output = []
 
         for i, (edge_index, _, size) in enumerate(adjs):
             x_target = x[:size[1]]
-            x_mean = self.convs_mean[i]((x, x_target), edge_index)
-            x_mean2 = self.convs_mean2[i]((x, x_target), edge_index)
-
-            all_layers_mean.append(x_mean)
-            all_layers_mean2.append(x_mean2)
-
+            x = self.convs_mean[i]((x, x_target), edge_index)
             if i != self.num_layers - 1:
                 x = F.relu(x)
 
-        x_final = torch.cat(all_layers_mean + all_layers_mean2, dim=1)
+            all_layers_output.append(x)
+
+        x_final = torch.cat(all_layers_output, dim=1)
         x_final = self.post_mp(x_final)
         return F.log_softmax(x_final, dim=-1)
 
-# 数据准备
+# 数据准备和模型初始化
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 dataset = Planetoid(root='data/Planetoid', name='Cora')
 data = dataset[0].to(device)
 
-# 模型初始化
-model = GraphSAGEPlusPlusDAC(dataset.num_features, 32, dataset.num_classes, num_layers=3).to(device)
-train_loader = NeighborSampler(data.edge_index, node_idx=data.train_mask, sizes=[20, 10, 10], batch_size=64, shuffle=True)
-test_loader = NeighborSampler(data.edge_index, node_idx=data.test_mask, sizes=[20, 10, 10], batch_size=64, shuffle=False)
-# 定义损失函数和优化器
+hidden_dims = [73, 34, 21]  # 定义每层的维度
+model = GraphSAGEPlusPlusMean(dataset.num_features, hidden_dims, dataset.num_classes).to(device)
+
+# 损失函数和优化器
 criterion = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
+
+# 数据加载器
+train_loader = NeighborSampler(data.edge_index, node_idx=data.train_mask, sizes=[20, 10, 10], batch_size=64, shuffle=True)
+test_loader = NeighborSampler(data.edge_index, node_idx=data.test_mask, sizes=[20, 10, 10], batch_size=64, shuffle=False)
 
 # 训练函数
 def train():
     model.train()
     total_loss = 0
-    for data in train_loader:
+    for batch_size, n_id, adjs in train_loader:
+        # 注意：adjs 是一个列表，其中每个元素是一个包含三个部分的元组
+        adjs = [adj.to(device) for adj in adjs]  # 将每个元组的每个部分移动到设备上
         optimizer.zero_grad()
-        out = model(data.x.to(device), data.edge_index.to(device))
-        loss = criterion(out[data.train_mask], data.y[data.train_mask].to(device))
+        out = model(data.x[n_id].to(device), adjs)  # 注意：这里使用了 adjs
+        loss = criterion(out, data.y[n_id[:batch_size]].to(device))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     return total_loss / len(train_loader)
 
-# 测试函数
 def test():
     model.eval()
     correct = 0
-    for data in test_loader:
-        out = model(data.x.to(device), data.edge_index.to(device))
+    for batch_size, n_id, adjs in test_loader:
+        adjs = [adj.to(device) for adj in adjs]
+        out = model(data.x[n_id].to(device), adjs)
         pred = out.argmax(dim=1)
-        correct += int(pred[data.test_mask].eq(data.y[data.test_mask].to(device)).sum().item())
+        correct += int(pred.eq(data.y[n_id[:batch_size]].to(device)).sum().item())
     return correct / int(data.test_mask.sum())
 
 # 训练和测试过程
 for epoch in range(1, 51):
     loss = train()
     print(f'Epoch {epoch}, Loss: {loss:.4f}')
+
 test_acc = test()
 print(f'Test Accuracy: {test_acc:.4f}')
+
 
 
 
