@@ -71,24 +71,31 @@ optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
 def train():
     model.train()
     total_loss = 0
-    for data in train_loader:
+    for batch_size, n_id, adjs in train_loader:  # 正确处理从NeighborSampler返回的数据
+        # 将邻居采样信息移动到正确的设备上
+        adjs = [adj.to(device) for adj in adjs]
         optimizer.zero_grad()
-        out = model(data.x.to(device), data.edge_index.to(device))
-        loss = criterion(out[data.train_mask], data.y[data.train_mask].to(device))
+        # 正确传递邻居采样数据给模型
+        out = model(data.x[n_id].to(device), adjs)
+        # 计算损失
+        loss = criterion(out, data.y[n_id[:batch_size]].to(device))
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
     return total_loss / len(train_loader)
 
+
 # 测试函数
 def test():
     model.eval()
     correct = 0
-    for data in test_loader:
-        out = model(data.x.to(device), data.edge_index.to(device))
-        pred = out.argmax(dim=1)
-        correct += int(pred[data.test_mask].eq(data.y[data.test_mask].to(device)).sum().item())
-    return correct / int(data.test_mask.sum())
+    for batch_size, n_id, adjs in test_loader:  # 正确处理从NeighborSampler返回的数据
+        adjs = [adj.to(device) for adj in adjs]  # 将邻居采样信息移动到正确的设备上
+
+        out = model(data.x[n_id].to(device), adjs)  # 正确传递邻居采样数据给模型
+        pred = out.argmax(dim=1)  # 获取概率最高的类别
+        correct += int(pred.eq(data.y[n_id[:batch_size]].to(device)).sum().item())  # 计算正确预测的数量
+    return correct / int(data.test_mask.sum())  # 返回测试准确率
 
 # 训练和测试过程
 for epoch in range(1, 51):
