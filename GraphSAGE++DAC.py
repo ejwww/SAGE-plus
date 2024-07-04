@@ -5,7 +5,7 @@ import torch.nn as nn
 from torch_geometric.datasets import Planetoid
 
 
-class GraphSAGEPlusPlusDAMC(torch.nn.Module):
+class GraphSAGEPlusPlusDAC(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers):
         super().__init__()
         self.num_layers = num_layers
