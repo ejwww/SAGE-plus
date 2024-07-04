@@ -53,7 +53,7 @@ data = dataset[0]
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 data = data.to(device)
-model = GraphSAGEPlusPlusDAMC(dataset.num_features, 32, dataset.num_classes, num_layers=3).to(device)
+model = GraphSAGEPlusPlusDAMC(dataset.num_features, 32, dataset.num_classes, num_layers=2).to(device)
 
 # 训练过程
 optimizer = torch.optim.Adam(model.parameters(), lr=0.005)
